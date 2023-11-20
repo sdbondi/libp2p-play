@@ -344,7 +344,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 };
                 println!("🤝 Peer ident: {peer}");
             }
-            SwarmEvent::Behaviour(ChatBehaviourEvent::Ping(_)) => {}
+            SwarmEvent::Behaviour(ChatBehaviourEvent::Ping(ping::Event {
+                peer,
+                connection,
+                result,
+            })) => match result {
+                Ok(duration) => {
+                    println!("🏓 Ping {peer} {connection} {duration:?}");
+                }
+                Err(e) => {
+                    println!("🏓 Ping {peer} {connection} {e:?}");
+                }
+            },
             SwarmEvent::ConnectionEstablished {
                 peer_id, endpoint, ..
             } => {
@@ -382,6 +393,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 num_established,
                 cause,
             } => {
+                println!(
+                    "👋 Connection to {peer_id:?} closed  (conn_id={connection_id:?}, {cause:?}"
+                );
                 tracing::info!("Connection to {peer_id:?} closed: {endpoint:?} (conn_id={connection_id:?}, num_established={num_established:?}) {cause:?}");
             }
             evt => {
