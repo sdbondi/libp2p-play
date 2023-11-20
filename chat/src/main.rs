@@ -350,10 +350,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 result,
             })) => match result {
                 Ok(duration) => {
-                    println!("🏓 Ping {peer} {connection} {duration:?}");
+                    println!("🏓 Ping {peer} id:{connection} {duration:?}");
                 }
                 Err(e) => {
-                    println!("🏓 Ping {peer} {connection} {e:?}");
+                    println!("🏓 Ping {peer} id:{connection} {e:?}");
                 }
             },
             SwarmEvent::ConnectionEstablished {
