@@ -1,10 +1,11 @@
 use clap::Parser;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
+use libp2p::kad::store::MemoryStore;
 use libp2p::{
     core::multiaddr::Protocol,
     core::Multiaddr,
-    identify, identity, noise, ping, relay,
+    identify, identity, kad, noise, ping, relay,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
@@ -38,6 +39,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 identify::Config::new("/TODO/0.0.1".to_string(), key.public())
                     .with_agent_version("tari/1.1.1".into()),
             ),
+            kad: kad::Behaviour::new(
+                key.public().to_peer_id(),
+                MemoryStore::new(key.public().into()),
+            ),
         })?
         .build();
 
@@ -61,27 +66,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Listening on {}", swarm.local_peer_id());
 
-    block_on(async {
-        loop {
-            match swarm.next().await.expect("Infinite Stream.") {
-                SwarmEvent::Behaviour(event) => {
-                    if let BehaviourEvent::Identify(identify::Event::Received {
-                        info: identify::Info { observed_addr, .. },
-                        ..
-                    }) = &event
-                    {
-                        swarm.add_external_address(observed_addr.clone());
-                    }
+    loop {
+        match swarm.next().await.expect("Infinite Stream.") {
+            SwarmEvent::Behaviour(event) => {
+                if let BehaviourEvent::Identify(identify::Event::Received {
+                    info: identify::Info { observed_addr, .. },
+                    ..
+                }) = &event
+                {
+                    swarm.add_external_address(observed_addr.clone());
+                }
 
-                    println!("{event:?}")
-                }
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    println!("Listening on {address:?}");
-                }
-                _ => {}
+                println!("{event:?}")
             }
+            SwarmEvent::NewListenAddr { address, .. } => {
+                println!("Listening on {address:?}");
+            }
+            _ => {}
         }
-    })
+    }
 }
 
 #[derive(NetworkBehaviour)]
@@ -89,6 +92,7 @@ struct Behaviour {
     relay: relay::Behaviour,
     ping: ping::Behaviour,
     identify: identify::Behaviour,
+    kad: kad::Behaviour<MemoryStore>,
 }
 
 fn generate_ed25519(secret_key_seed: u8) -> identity::Keypair {

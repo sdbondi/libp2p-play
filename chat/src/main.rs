@@ -13,6 +13,8 @@ use libp2p::{
 };
 use libp2p_dcutr as dcutr;
 use libp2p_gossipsub as gossipsub;
+use libp2p_kad as kad;
+use libp2p_kad::store::MemoryStore;
 use std::error::Error;
 use std::str::FromStr;
 use std::sync::atomic;
@@ -60,7 +62,7 @@ impl FromStr for Mode {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
@@ -80,6 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         identify: identify::Behaviour,
         dcutr: dcutr::Behaviour,
         gossipsub: gossipsub::Behaviour,
+        kad: kad::Behaviour<MemoryStore>,
     }
     let key = generate_ed25519(opts.secret_key_seed);
 
@@ -113,7 +116,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .message_id_fn(message_id_fn) // content-address messages. No two messages of the same content will be propagated.
                 .build()
                 .unwrap();
-            // .map_err(|msg| io::Error::new(io::ErrorKind::Other, msg))?; // Temporary hack because `build` does not return a proper `std::error::Error`.
 
             // build a gossipsub network behaviour
             let gossipsub = gossipsub::Behaviour::new(
@@ -122,7 +124,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             )
             .unwrap();
 
+            let peer_id = keypair.public().to_peer_id();
+            let kad = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
+
             ChatBehaviour {
+                kad,
                 relay: relay_behaviour,
                 ping: ping::Behaviour::new(
                     ping::Config::new()
@@ -146,6 +152,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
         .unwrap();
 
+    match swarm.behaviour_mut().kad.bootstrap() {
+        Ok(_) => {
+            tracing::info!("Bootstrapped Kad");
+        }
+        Err(e) => {
+            tracing::error!("Failed to bootstrap Kad: {e:?}");
+        }
+    }
+
     // Wait to listen on all interfaces.
     let delay = tokio::time::sleep(std::time::Duration::from_secs(1));
     tokio::pin!(delay);
@@ -165,93 +180,62 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-
     // Connect to the relay server. Not for the reservation or relayed connection, but to (a) learn
     // our local public address and (b) enable a freshly started relay to learn its public address.
-    // swarm.dial(relay_addr.clone()).unwrap();
-    // let mut learned_observed_addr = false;
-    // let mut told_relay_observed_addr = false;
-    //
-    // loop {
-    //     match swarm.next().await.unwrap() {
-    //         SwarmEvent::NewListenAddr { .. } => {}
-    //         SwarmEvent::Dialing { .. } => {}
-    //         SwarmEvent::ConnectionEstablished { .. } => {}
-    //         SwarmEvent::Behaviour(ChatBehaviourEvent::Ping(_)) => {}
-    //         SwarmEvent::Behaviour(ChatBehaviourEvent::Identify(identify::Event::Sent {
-    //             ..
-    //         })) => {
-    //             tracing::info!("Told relay its public address");
-    //             told_relay_observed_addr = true;
-    //         }
-    //         SwarmEvent::Behaviour(ChatBehaviourEvent::Identify(identify::Event::Received {
-    //             info: identify::Info { observed_addr, .. },
-    //             ..
-    //         })) => {
-    //             tracing::info!(address=%observed_addr, "Relay told us our observed address");
-    //             learned_observed_addr = true;
-    //         }
-    //         event => panic!("{event:?}"),
-    //     }
-    //
-    //     if learned_observed_addr && told_relay_observed_addr {
-    //         break;
-    //     }
-    // }
+    swarm.dial(relay_addr.clone()).unwrap();
+    let mut learned_observed_addr = false;
+    let mut told_relay_observed_addr = false;
+
+    loop {
+        match swarm.next().await.unwrap() {
+            SwarmEvent::NewListenAddr { .. } => {}
+            SwarmEvent::Dialing { .. } => {}
+            SwarmEvent::ConnectionEstablished { established_in, .. } => {
+                println!("🌟 Connection established to relay in {:?}", established_in);
+            }
+            SwarmEvent::Behaviour(ChatBehaviourEvent::Ping(_)) => {}
+            SwarmEvent::Behaviour(ChatBehaviourEvent::Identify(identify::Event::Sent {
+                ..
+            })) => {
+                println!("🤝 We told relay its public address");
+                tracing::info!("Told relay its public address");
+                told_relay_observed_addr = true;
+            }
+            SwarmEvent::Behaviour(ChatBehaviourEvent::Identify(identify::Event::Received {
+                info: identify::Info { observed_addr, .. },
+                ..
+            })) => {
+                tracing::info!(address=%observed_addr, "Relay told us our observed address");
+                println!("🤝 Relay told us our observed address '{observed_addr}'");
+                learned_observed_addr = true;
+            }
+            event => tracing::info!("{event:?}"),
+        }
+
+        if learned_observed_addr && told_relay_observed_addr {
+            break;
+        }
+    }
+
+    swarm
+        .listen_on(relay_addr.clone().with(Protocol::P2pCircuit))
+        .unwrap();
 
     match opts.mode {
         Mode::Dial => {
-            let addr = relay_addr
-                .with(Protocol::P2pCircuit)
-                .with(Protocol::P2p(opts.remote_peer_id.clone().unwrap()));
+            let query_id = swarm
+                .behaviour_mut()
+                .kad
+                .get_closest_peers(opts.remote_peer_id.clone().unwrap());
+            // let addr = relay_addr
+            //     .with(Protocol::P2pCircuit)
+            //     .with(Protocol::P2p(opts.remote_peer_id.clone().unwrap()));
+
             tracing::info!("Dialing peer via relay");
-            println!("📞 Dialing peer via relay address '{addr}'");
-            swarm.dial(addr).unwrap();
+            // println!("📞 Dialing peer via relay address '{addr}'");
+            // swarm.dial(addr).unwrap();
         }
-        Mode::Listen => {
-            // Connect to the relay server. Not for the reservation or relayed connection, but to (a) learn
-            // our local public address and (b) enable a freshly started relay to learn its public address.
-            swarm.dial(relay_addr.clone()).unwrap();
-            let mut learned_observed_addr = false;
-            let mut told_relay_observed_addr = false;
-
-            loop {
-                match swarm.next().await.unwrap() {
-                    SwarmEvent::NewListenAddr { .. } => {}
-                    SwarmEvent::Dialing { .. } => {}
-                    SwarmEvent::ConnectionEstablished { established_in, .. } => {
-                        println!("🌟 Connection established to relay in {:?}", established_in);
-                    }
-                    SwarmEvent::Behaviour(ChatBehaviourEvent::Ping(_)) => {}
-                    SwarmEvent::Behaviour(ChatBehaviourEvent::Identify(
-                        identify::Event::Sent { .. },
-                    )) => {
-                        println!("🤝 We told relay its public address");
-                        tracing::info!("Told relay its public address");
-                        told_relay_observed_addr = true;
-                    }
-                    SwarmEvent::Behaviour(ChatBehaviourEvent::Identify(
-                        identify::Event::Received {
-                            info: identify::Info { observed_addr, .. },
-                            ..
-                        },
-                    )) => {
-                        tracing::info!(address=%observed_addr, "Relay told us our observed address");
-                        println!("🤝 Relay told us our observed address '{observed_addr}'");
-                        learned_observed_addr = true;
-                    }
-                    event => tracing::info!("{event:?}"),
-                }
-
-                if learned_observed_addr && told_relay_observed_addr {
-                    break;
-                }
-            }
-
-            swarm
-                .listen_on(relay_addr.with(Protocol::P2pCircuit))
-                .unwrap();
-        }
+        Mode::Listen => {}
     }
 
     tracing::info!(
@@ -305,7 +289,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             SwarmEvent::Behaviour(ChatBehaviourEvent::Relay(
                 relay::client::Event::ReservationReqAccepted { .. },
             )) => {
-                assert_eq!(opts.mode, Mode::Listen);
                 println!("🤝 Relay accepted our reservation request");
                 tracing::info!("Relay accepted our reservation request");
             }
@@ -361,6 +344,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             } => {
                 tracing::info!("Connection established to {peer_id:?} ({endpoint:?})");
                 println!("👨‍🔧 Connection established to {peer_id:?} ({endpoint:?})");
+                swarm
+                    .behaviour_mut()
+                    .kad
+                    .add_address(&peer_id, endpoint.get_remote_address().clone());
                 swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
@@ -370,7 +357,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         .map(|p| p.to_string())
                         .unwrap_or_else(|| "--".to_string())
                 );
-                // tracing::info!(peer=?peer_id, "Outgoing connection failed: {error}");
+                tracing::info!(peer=?peer_id, "Outgoing connection failed: {error}");
             }
 
             SwarmEvent::Behaviour(ChatBehaviourEvent::Gossipsub(gossipsub::Event::Message {
@@ -397,6 +384,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "👋 Connection to {peer_id:?} closed  (conn_id={connection_id:?}, {cause:?}"
                 );
                 tracing::info!("Connection to {peer_id:?} closed: {endpoint:?} (conn_id={connection_id:?}, num_established={num_established:?}) {cause:?}");
+            }
+            SwarmEvent::Behaviour(ChatBehaviourEvent::Kad(
+                kad::Event::OutboundQueryProgressed {
+                    result: kad::QueryResult::GetClosestPeers(result),
+                    ..
+                },
+            )) => {
+                match result {
+                    Ok(ok) => {
+                        // The example is considered failed as there
+                        // should always be at least 1 reachable peer.
+                        // if ok.peers.is_empty() {
+                        //     anyhow::bail!("Query finished with no closest peers.")
+                        // }
+
+                        println!("Query finished with closest peers: {:#?}", ok.peers);
+
+                        let mut addrs = vec![];
+                        for p in ok.peers {
+                            let bucket = swarm.behaviour_mut().kad.kbucket(p).unwrap();
+                            for k in bucket.iter() {
+                                for addr in k.node.value.iter() {
+                                    println!("Dialing {addr}");
+                                    addrs.push(addr.clone());
+                                }
+                            }
+                        }
+
+                        for addr in addrs {
+                            swarm.dial(addr.clone())?;
+                        }
+                    }
+                    Err(e) => {
+                        println!("Query failed: {}", e);
+                    }
+                }
             }
             evt => {
                 tracing::info!("Got event: {:?}", evt);

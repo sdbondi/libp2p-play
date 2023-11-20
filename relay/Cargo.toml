@@ -10,6 +10,6 @@ clap = { version = "4.4.8", features = ["derive"] }
 tokio = { version = "1" , features = ["full"]}
 async-trait = "0.1"
 futures = "0.3.2"
-libp2p = { version = "0.53.1", features = [ "tokio", "noise", "macros", "ping", "tcp", "identify", "yamux", "relay", "quic"] }
+libp2p = { version = "0.53.1", features = [ "tokio", "noise", "macros", "ping", "tcp", "identify", "yamux", "relay", "quic", "kad"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

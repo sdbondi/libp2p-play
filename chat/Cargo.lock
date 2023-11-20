@@ -1266,7 +1266,6 @@ dependencies = [
  "libp2p-dns",
  "libp2p-identify",
  "libp2p-identity",
- "libp2p-kad",
  "libp2p-mdns",
  "libp2p-metrics",
  "libp2p-noise",
@@ -1508,7 +1507,6 @@ dependencies = [
  "libp2p-core",
  "libp2p-identify",
  "libp2p-identity",
- "libp2p-kad",
  "libp2p-ping",
  "libp2p-relay",
  "libp2p-swarm",
@@ -1564,12 +1562,14 @@ dependencies = [
 name = "libp2p-play"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "clap",
  "futures",
  "libp2p",
  "libp2p-dcutr",
  "libp2p-gossipsub",
+ "libp2p-kad",
  "rand",
  "tokio",
  "tracing",
