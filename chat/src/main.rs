@@ -267,6 +267,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let topic = gossipsub::IdentTopic::new("chat");
 
+    swarm.behaviour_mut().gossipsub.subscribe(&topic).unwrap();
+
     // Kick it off
     loop {
         let maybe_event = tokio::select! {
@@ -364,12 +366,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 propagation_source: peer_id,
                 message_id: id,
                 message,
-            })) => println!(
-                "✉️ {}{peer_id}{}: [{id}] '{}'",
-                Style::new().bold().render(),
-                Style::new().render_reset(),
-                String::from_utf8_lossy(&message.data),
-            ),
+            })) => {
+                println!(
+                    "✉️ {}{peer_id}{}: [{id} {}] '{}'",
+                    Style::new().bold().render(),
+                    Style::new().render_reset(),
+                    message.topic,
+                    String::from_utf8_lossy(&message.data),
+                )
+            }
             SwarmEvent::ConnectionClosed {
                 peer_id,
                 endpoint,
