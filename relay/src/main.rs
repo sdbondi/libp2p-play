@@ -71,10 +71,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             SwarmEvent::Behaviour(event) => {
                 if let BehaviourEvent::Identify(identify::Event::Received {
                     info: identify::Info { observed_addr, .. },
-                    ..
+                    peer_id,
                 }) = &event
                 {
                     swarm.add_external_address(observed_addr.clone());
+                    swarm
+                        .behaviour_mut()
+                        .kad
+                        .add_address(&peer_id, observed_addr.clone());
                 }
 
                 println!("{event:?}")
