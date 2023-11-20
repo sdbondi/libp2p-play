@@ -1,0 +1,23 @@
+[package]
+name = "libp2p-play"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libp2p = { version = "0.53.1", features = [ "tokio", "mdns", "noise", "macros", "tcp", "yamux", "quic"] }
+libp2p-gossipsub = "0.46.0"
+libp2p-kad = "0.45.1"
+libp2p-identity = { version = "0.2.8", default-features = false, features = ["ed25519"] }
+libp2p-identify = "0.44.0"
+libp2p-ping = "0.44.0"
+libp2p-dcutr = "0.11.0"
+
+tari_crypto = "0.19.0"
+
+clap = "4.4.8"
+tokio = { version = "1.34", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3.29"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
